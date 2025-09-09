@@ -19,7 +19,7 @@ The library is extended by adapters, refer to the documentation of particular ad
 
 ## Blue Green Version tracking filter
 This library provides implementation of Blue Green version filter by [filter.go](filter.go).  
-This implementation depends on [blue-green-state-monitor-go](https://github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2) library.
+This implementation depends on [blue-green-state-monitor-go](https://github.com/netcracker/qubership-core-lib-go-bg-state-monitor/) library.
 
 Usage example:
 ```go
