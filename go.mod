@@ -1,8 +1,6 @@
 module github.com/netcracker/qubership-core-lib-go-bg-kafka/v3
 
-go 1.23.8
-
-toolchain go1.24.2
+go 1.25.1
 
 require (
 	github.com/docker/go-connections v0.6.0
@@ -39,7 +37,6 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-viper/mapstructure/v2 v2.3.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
