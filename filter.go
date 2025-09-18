@@ -3,8 +3,9 @@ package blue_green_kafka
 import (
 	"context"
 	"fmt"
-	bgMonitor "github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2"
 	"sync/atomic"
+
+	bgMonitor "github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2"
 )
 
 type TrackingVersionFilter struct {
@@ -62,7 +63,7 @@ func NewFilter(bgState bgMonitor.BlueGreenState) *Filter {
 			})
 		default:
 			return newFilter("false", func(v string) (bool, error) {
-				return false, fmt.Errorf("invalid state: " + blueGreenState.String())
+				return false, fmt.Errorf("invalid state: %s", blueGreenState)
 			})
 		}
 	}
