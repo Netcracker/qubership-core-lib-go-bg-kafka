@@ -3,20 +3,27 @@ package blue_green_kafka
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	bgMonitor "github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2"
 	"github.com/stretchr/testify/require"
 )
 
-type mockMessage struct{}
+type mockMessage struct {
+	headers []Header
+	key     []byte
+	value   []byte
+}
 
 func (m *mockMessage) Topic() string        { return "mock-topic" }
 func (m *mockMessage) Offset() int64        { return 0 }
 func (m *mockMessage) HighWaterMark() int64 { return 0 }
-func (m *mockMessage) Headers() []Header    { return nil }
-func (m *mockMessage) Key() []byte          { return nil }
-func (m *mockMessage) Value() []byte        { return nil }
+func (m *mockMessage) Headers() []Header    { return m.headers }
+func (m *mockMessage) Key() []byte          { return m.key }
+func (m *mockMessage) Value() []byte        { return m.value }
 func (m *mockMessage) Partition() int       { return 0 }
 func (m *mockMessage) NativeMsg() any       { return nil }
 
@@ -187,4 +194,233 @@ func TestBgConsumer_Commit_Ignored(t *testing.T) {
 	marker := &CommitMarker{Version: bgMonitor.NamespaceVersion{Namespace: "other", Version: otherVersion}}
 	err := bg.Commit(ctx, marker)
 	require.NoError(t, err)
+}
+
+func TestBgConsumer_Poll_Accepted(t *testing.T) {
+	ctx := context.Background()
+	version := bgMonitor.NewVersionMust("v1")
+	bgState := bgMonitor.BlueGreenState{
+		Current: bgMonitor.NamespaceVersion{Namespace: "ns", Version: version},
+	}
+	msg := &mockMessage{
+		headers: []Header{{Key: "x-version", Value: []byte("v1")}},
+		key:     []byte("k1"),
+		value:   []byte("v"),
+	}
+	mc := &mockConsumerWithMsg{msg: msg}
+	bg := &BgConsumer{
+		consumer:      mc,
+		metrics:       NewConsumerMetrics("test-topic"),
+		bgStateActive: &bgState,
+		versionFilter: NewFilter(bgState),
+		pollMux:       &sync.Mutex{},
+		bgStateChange: &atomic.Pointer[bgMonitor.BlueGreenState]{},
+	}
+	rec, err := bg.Poll(ctx, time.Millisecond*100)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.NotNil(t, rec.Message)
+}
+
+func TestBgConsumer_Poll_Rejected(t *testing.T) {
+	ctx := context.Background()
+	version := bgMonitor.NewVersionMust("v1")
+	otherVersion := bgMonitor.NewVersionMust("v2")
+	bgState := bgMonitor.BlueGreenState{
+		Current: bgMonitor.NamespaceVersion{Namespace: "ns", Version: version, State: bgMonitor.StateActive},
+		Sibling: &bgMonitor.NamespaceVersion{Namespace: "ns", Version: otherVersion, State: bgMonitor.StateActive},
+	}
+	msg := &mockMessage{
+		headers: []Header{{Key: "x-version", Value: []byte("v2")}},
+		key:     []byte("k1"),
+		value:   []byte("v"),
+	}
+	mc := &mockConsumerWithMsg{msg: msg}
+	bg := &BgConsumer{
+		consumer:      mc,
+		metrics:       NewConsumerMetrics("test-topic"),
+		bgStateActive: &bgState,
+		versionFilter: NewFilter(bgState),
+		pollMux:       &sync.Mutex{},
+		bgStateChange: &atomic.Pointer[bgMonitor.BlueGreenState]{},
+	}
+	rec, err := bg.Poll(ctx, time.Millisecond*100)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	xVer := getXVersion(msg.Headers())
+	accepted, ferr := bg.versionFilter.Test(xVer)
+	require.NoError(t, ferr)
+	require.False(t, accepted, "Should be false")
+}
+
+func TestBgConsumer_Poll_StateChange(t *testing.T) {
+	ctx := context.Background()
+	version := bgMonitor.NewVersionMust("v1")
+	newVersion := bgMonitor.NewVersionMust("v2")
+	bgState := bgMonitor.BlueGreenState{
+		Current: bgMonitor.NamespaceVersion{Namespace: "ns", Version: version, State: bgMonitor.StateActive},
+	}
+	newState := bgMonitor.BlueGreenState{
+		Current: bgMonitor.NamespaceVersion{Namespace: "ns", Version: newVersion, State: bgMonitor.StateActive},
+	}
+
+	mc := &mockConsumerWithState{
+		msgs: []Message{&mockMessage{headers: []Header{{Key: "x-version", Value: []byte("v2")}}}},
+	}
+	topic := "test-topic"
+	consumerSupplier := func(groupId string) (Consumer, error) { return mc, nil }
+	adminSupplier := func() (NativeAdminAdapter, error) { return &mockAdmin{}, nil }
+
+	bg := &BgConsumer{
+		Config: &BgKafkaConsumerConfig{
+			ConsumerSupplier:             consumerSupplier,
+			AdminSupplier:                adminSupplier,
+			Topic:                        func() string { return topic },
+			GroupIdPrefix:                func() string { return "test-group" },
+			ConsistencyMode:              func() ConsumerConsistencyMode { return Eventual },
+			ActiveOffsetSetupStrategy:    func() OffsetSetupStrategy { return StrategyLatest },
+			CandidateOffsetSetupStrategy: func() OffsetSetupStrategy { return StrategyLatest },
+		},
+		consumer:      mc,
+		metrics:       NewConsumerMetrics(topic),
+		bgStateActive: &bgState,
+		versionFilter: NewFilter(bgState),
+		pollMux:       &sync.Mutex{},
+		bgStateChange: &atomic.Pointer[bgMonitor.BlueGreenState]{},
+	}
+
+	// Store new state to trigger reinitialization
+	bg.bgStateChange.Store(&newState)
+
+	rec, err := bg.Poll(ctx, time.Second)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.True(t, mc.closed, "Previous consumer should be closed")
+}
+
+func TestBgConsumer_Poll_Timeout(t *testing.T) {
+	ctx := context.Background()
+	version := bgMonitor.NewVersionMust("v1")
+	bgState := bgMonitor.BlueGreenState{
+		Current: bgMonitor.NamespaceVersion{Namespace: "ns", Version: version, State: bgMonitor.StateActive},
+	}
+
+	mc := &mockConsumerWithError{err: context.DeadlineExceeded}
+	bg := &BgConsumer{
+		consumer:      mc,
+		metrics:       NewConsumerMetrics("test-topic"),
+		bgStateActive: &bgState,
+		versionFilter: NewFilter(bgState),
+		pollMux:       &sync.Mutex{},
+		bgStateChange: &atomic.Pointer[bgMonitor.BlueGreenState]{},
+	}
+
+	rec, err := bg.Poll(ctx, time.Millisecond)
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Nil(t, rec)
+}
+
+func TestBgConsumer_Poll_ReadError(t *testing.T) {
+	ctx := context.Background()
+	version := bgMonitor.NewVersionMust("v1")
+	bgState := bgMonitor.BlueGreenState{
+		Current: bgMonitor.NamespaceVersion{Namespace: "ns", Version: version, State: bgMonitor.StateActive},
+	}
+
+	expectedErr := errors.New("read error")
+	mc := &mockConsumerWithError{err: expectedErr}
+	bg := &BgConsumer{
+		consumer:      mc,
+		metrics:       NewConsumerMetrics("test-topic"),
+		bgStateActive: &bgState,
+		versionFilter: NewFilter(bgState),
+		pollMux:       &sync.Mutex{},
+		bgStateChange: &atomic.Pointer[bgMonitor.BlueGreenState]{},
+	}
+
+	rec, err := bg.Poll(ctx, time.Second)
+	require.Error(t, err)
+	require.ErrorIs(t, err, expectedErr)
+	require.Nil(t, rec)
+}
+
+func TestBgConsumer_Commit_Error(t *testing.T) {
+	ctx := context.Background()
+	version := bgMonitor.NewVersionMust("v1")
+	bgState := bgMonitor.BlueGreenState{
+		Current: bgMonitor.NamespaceVersion{Namespace: "ns", Version: version},
+	}
+	expectedErr := errors.New("commit error")
+	mc := &mockConsumerWithError{err: expectedErr}
+	bg := &BgConsumer{
+		consumer:      mc,
+		metrics:       NewConsumerMetrics("test-topic"),
+		bgStateActive: &bgState,
+		versionFilter: NewFilter(bgState),
+	}
+	marker := &CommitMarker{Version: bgMonitor.NamespaceVersion{Namespace: "ns", Version: version}}
+	err := bg.Commit(ctx, marker)
+	require.Error(t, err)
+	require.ErrorIs(t, err, expectedErr)
+}
+
+// Additional mock types for new tests
+type mockConsumerWithMsg struct {
+	msg Message
+}
+
+func (m *mockConsumerWithMsg) ReadMessage(_ context.Context) (Message, error)  { return m.msg, nil }
+func (m *mockConsumerWithMsg) Commit(_ context.Context, _ *CommitMarker) error { return nil }
+func (m *mockConsumerWithMsg) Close() error                                    { return nil }
+
+type mockConsumerWithState struct {
+	msgs   []Message
+	closed bool
+	idx    int
+}
+
+func (m *mockConsumerWithState) ReadMessage(_ context.Context) (Message, error) {
+	if m.idx >= len(m.msgs) {
+		return nil, errors.New("no more messages")
+	}
+	msg := m.msgs[m.idx]
+	m.idx++
+	return msg, nil
+}
+
+func (m *mockConsumerWithState) Commit(_ context.Context, _ *CommitMarker) error { return nil }
+func (m *mockConsumerWithState) Close() error {
+	m.closed = true
+	return nil
+}
+
+type mockConsumerWithError struct {
+	err error
+}
+
+func (m *mockConsumerWithError) ReadMessage(_ context.Context) (Message, error)  { return nil, m.err }
+func (m *mockConsumerWithError) Commit(_ context.Context, _ *CommitMarker) error { return m.err }
+func (m *mockConsumerWithError) Close() error                                    { return nil }
+
+type mockAdmin struct{}
+
+func (m *mockAdmin) ListConsumerGroups(ctx context.Context) ([]ConsumerGroup, error) { return nil, nil }
+func (m *mockAdmin) ListConsumerGroupOffsets(ctx context.Context, groupId string) (map[TopicPartition]OffsetAndMetadata, error) {
+	return nil, nil
+}
+func (m *mockAdmin) AlterConsumerGroupOffsets(ctx context.Context, groupId GroupId, offsets map[TopicPartition]OffsetAndMetadata) error {
+	return nil
+}
+func (m *mockAdmin) PartitionsFor(ctx context.Context, topics ...string) ([]PartitionInfo, error) {
+	return []PartitionInfo{{Topic: "test-topic", Partition: 0}}, nil
+}
+func (m *mockAdmin) BeginningOffsets(ctx context.Context, topicPartitions []TopicPartition) (map[TopicPartition]int64, error) {
+	return nil, nil
+}
+func (m *mockAdmin) EndOffsets(ctx context.Context, topicPartitions []TopicPartition) (map[TopicPartition]int64, error) {
+	return nil, nil
+}
+func (m *mockAdmin) OffsetsForTimes(ctx context.Context, times map[TopicPartition]time.Time) (map[TopicPartition]*OffsetAndTimestamp, error) {
+	return nil, nil
 }
