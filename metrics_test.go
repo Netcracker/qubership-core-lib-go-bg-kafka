@@ -344,3 +344,50 @@ func TestMetrics_clean(t *testing.T) {
 		assert.Equal(t, droppedPartitionMetric, m.CommitCount, "unexpected commit count")
 	})
 }
+
+func TestPartitionedInt64Metric_GetByPartitions(t *testing.T) {
+	t.Run("should return all values", func(t *testing.T) {
+		metric := &PartitionedInt64Metric{
+			values: map[int]int64{
+				1: 100,
+				2: 200,
+				3: 300,
+			},
+		}
+
+		result := metric.GetByPartitions()
+
+		expected := map[int]int64{
+			1: 100,
+			2: 200,
+			3: 300,
+		}
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("should return empty map for empty values", func(t *testing.T) {
+		metric := &PartitionedInt64Metric{
+			values: map[int]int64{},
+		}
+
+		result := metric.GetByPartitions()
+
+		expected := map[int]int64{}
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("should return single value", func(t *testing.T) {
+		metric := &PartitionedInt64Metric{
+			values: map[int]int64{
+				1: 100,
+			},
+		}
+
+		result := metric.GetByPartitions()
+
+		expected := map[int]int64{
+			1: 100,
+		}
+		assert.Equal(t, expected, result)
+	})
+}
