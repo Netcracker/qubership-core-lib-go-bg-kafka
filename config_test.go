@@ -2,7 +2,6 @@ package blue_green_kafka
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -84,45 +83,6 @@ func (m *mockBGStatePublisher) Subscribe(_ context.Context, callback func(state 
 
 func (m *mockBGStatePublisher) GetState() bgMonitor.BlueGreenState {
 	return bgMonitor.BlueGreenState{}
-}
-
-// Mock Koanf implementation
-type mockKoanf struct {
-	values map[string]string
-}
-
-func (m *mockKoanf) String(key string) string {
-	return m.values[key]
-}
-
-func (m *mockKoanf) MustString(key string) string {
-	if val, ok := m.values[key]; ok {
-		return val
-	}
-	panic(fmt.Sprintf("key not found: %s", key))
-}
-
-func setupTestEnv() *mockKoanf {
-	return &mockKoanf{
-		values: map[string]string{
-			"microservice.namespace": "test-namespace",
-			"consul.url":             "http://consul:8500",
-		},
-	}
-}
-
-func TestGetNamespace(t *testing.T) {
-	mock := setupTestEnv()
-	expectedNS := mock.values["microservice.namespace"]
-	namespace := mock.MustString("microservice.namespace")
-	assert.Equal(t, expectedNS, namespace)
-}
-
-func TestGetConsulUrl(t *testing.T) {
-	mock := setupTestEnv()
-	expectedURL := mock.values["consul.url"]
-	url := mock.String("consul.url")
-	assert.Equal(t, expectedURL, url)
 }
 
 func TestGetAuthSupplier(t *testing.T) {
