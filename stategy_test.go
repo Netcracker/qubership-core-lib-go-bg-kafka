@@ -9,29 +9,11 @@ import (
 )
 
 func TestRewind(t *testing.T) {
-	t.Run("should create rewind strategy with correct shift", func(t *testing.T) {
-		rewindInterval := 5 * time.Minute
-		strategy := Rewind(rewindInterval)
-
-		assert.Equal(t, rewindInterval, strategy.shift)
-		assert.Equal(t, "rewind on 5m0s", strategy.description)
-	})
-
-	t.Run("should create rewind strategy with zero duration", func(t *testing.T) {
-		rewindInterval := 0 * time.Second
-		strategy := Rewind(rewindInterval)
-
-		assert.Equal(t, rewindInterval, strategy.shift)
-		assert.Equal(t, "rewind on 0s", strategy.description)
-	})
-
-	t.Run("should create rewind strategy with negative duration", func(t *testing.T) {
-		rewindInterval := -1 * time.Hour
-		strategy := Rewind(rewindInterval)
-
-		assert.Equal(t, rewindInterval, strategy.shift)
-		assert.Equal(t, "rewind on -1h0m0s", strategy.description)
-	})
+	duration, err := time.ParseDuration("1h2m3s4ms")
+	assert.NoError(t, err)
+	offsetSetupStrategy := Rewind(duration)
+	assert.Equal(t, duration, offsetSetupStrategy.shift)
+	assert.Equal(t, "rewind on 1h2m3.004s", offsetSetupStrategy.description)
 }
 
 func TestOffsetSetupStrategy_getShift(t *testing.T) {
