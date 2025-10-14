@@ -1,52 +1,14 @@
 package blue_green_kafka
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	bgMonitor "github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestParseGroupId_ErrorCases(t *testing.T) {
-	assertions := require.New(t)
-
-	t.Run("should return PlainGroupId for invalid format", func(t *testing.T) {
-		groupId, err := ParseGroupId("invalid-group-id")
-		assertions.NoError(err)
-		plainId := groupId.(*PlainGroupId)
-		assertions.Equal("invalid-group-id", plainId.Name)
-	})
-
-	t.Run("should return PlainGroupId for empty string", func(t *testing.T) {
-		groupId, err := ParseGroupId("")
-		assertions.NoError(err)
-		plainId := groupId.(*PlainGroupId)
-		assertions.Equal("", plainId.Name)
-	})
-
-	t.Run("should return PlainGroupId for invalid timestamp format", func(t *testing.T) {
-		groupId, err := ParseGroupId("test-v1-a_i-invalid-timestamp")
-		assertions.NoError(err)
-		plainId := groupId.(*PlainGroupId)
-		assertions.Equal("test-v1-a_i-invalid-timestamp", plainId.Name)
-	})
-}
-
-func TestMustParseGroupId_Success(t *testing.T) {
-	assertions := require.New(t)
-
-	t.Run("should return PlainGroupId for invalid format", func(t *testing.T) {
-		groupId := MustParseGroupId("invalid-group-id")
-		plainId := groupId.(*PlainGroupId)
-		assertions.Equal("invalid-group-id", plainId.Name)
-	})
-
-	t.Run("should return PlainGroupId for empty string", func(t *testing.T) {
-		groupId := MustParseGroupId("")
-		plainId := groupId.(*PlainGroupId)
-		assertions.Equal("", plainId.Name)
-	})
-}
 
 func TestPlainGroupId_GetGroupIdPrefix(t *testing.T) {
 	assertions := require.New(t)
@@ -97,4 +59,60 @@ func TestFromOffsetDateTime(t *testing.T) {
 
 		assertions.Equal("2023-07-07_10-30-00", timestamp)
 	})
+}
+
+func TestParseGroupId(t *testing.T) {
+	timeStr := "2025-01-02_03-04-05"
+	time, err := time.Parse("2006-01-02_15-04-05", timeStr)
+	assert.NoError(t, err)
+
+	type args struct {
+		name string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    GroupId
+		wantErr assert.ErrorAssertionFunc
+	}{
+		{
+			name:    "plain group",
+			args:    struct{ name string }{name: "plain-group-name"},
+			want:    &PlainGroupId{Name: "plain-group-name"},
+			wantErr: assert.NoError,
+		},
+		{
+			name: "versioned pattern group",
+			args: struct{ name string }{name: "groupA-v1-a_c-" + timeStr},
+			want: &VersionedGroupId{
+				GroupIdPrefix: "groupA",
+				Version:       *bgMonitor.NewVersionMust("v1"),
+				State:         bgMonitor.StateActive,
+				SiblingState:  bgMonitor.StateCandidate,
+				Updated:       time,
+			},
+			wantErr: assert.NoError,
+		},
+		{
+			name: "bg1 versioned pattern group",
+			args: struct{ name string }{name: fmt.Sprintf("groupA-v5v8a%d", time.Unix())},
+			want: &BG1VersionedGroupId{
+				GroupIdPrefix:    "groupA",
+				Version:          *bgMonitor.NewVersionMust("v5"),
+				BlueGreenVersion: *bgMonitor.NewVersionMust("v8"),
+				Stage:            "a",
+				Updated:          time.Local(),
+			},
+			wantErr: assert.NoError,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseGroupId(tt.args.name)
+			if !tt.wantErr(t, err, fmt.Sprintf("ParseGroupId(%v)", tt.args.name)) {
+				return
+			}
+			assert.Equalf(t, tt.want, got, "ParseGroupId(%v)", tt.args.name)
+		})
+	}
 }
