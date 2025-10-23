@@ -424,3 +424,20 @@ func (m *mockAdmin) EndOffsets(ctx context.Context, topicPartitions []TopicParti
 func (m *mockAdmin) OffsetsForTimes(ctx context.Context, times map[TopicPartition]time.Time) (map[TopicPartition]*OffsetAndTimestamp, error) {
 	return nil, nil
 }
+
+func TestBgConsumer_Stats(t *testing.T) {
+	version := bgMonitor.NewVersionMust("v1")
+	bgState := bgMonitor.BlueGreenState{
+		Current: bgMonitor.NamespaceVersion{Namespace: "ns", Version: version},
+	}
+
+	bg := &BgConsumer{
+		consumer:      &mockConsumer{},
+		metrics:       NewConsumerMetrics("test-topic"),
+		bgStateActive: &bgState,
+		versionFilter: NewFilter(bgState),
+	}
+
+	stats := bg.Stats()
+	require.NotNil(t, stats)
+}
