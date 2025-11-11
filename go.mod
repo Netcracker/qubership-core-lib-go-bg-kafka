@@ -9,7 +9,7 @@ require (
 	github.com/netcracker/qubership-core-lib-go-rest-utils/v2 v2.1.0
 	github.com/netcracker/qubership-core-lib-go/v3 v3.2.0
 	github.com/stretchr/testify v1.11.1
-	github.com/testcontainers/testcontainers-go/modules/kafka v0.39.0
+	github.com/testcontainers/testcontainers-go/modules/kafka v0.40.0
 )
 
 require (
@@ -18,7 +18,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/avast/retry-go/v4 v4.7.0 // indirect
-	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
+	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
@@ -26,7 +26,7 @@ require (
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/docker v28.3.3+incompatible // indirect
+	github.com/docker/docker v28.5.1+incompatible // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/fatih/color v1.18.0 // indirect
@@ -36,7 +36,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
@@ -78,7 +77,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/shirou/gopsutil/v4 v4.25.6 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
-	github.com/testcontainers/testcontainers-go v0.39.0 // indirect
+	github.com/testcontainers/testcontainers-go v0.40.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/viney-shih/go-lock v1.1.2 // indirect
@@ -88,10 +87,10 @@ require (
 	go.opentelemetry.io/otel v1.35.0 // indirect
 	go.opentelemetry.io/otel/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
-	golang.org/x/crypto v0.37.0 // indirect
+	golang.org/x/crypto v0.43.0 // indirect
 	golang.org/x/exp v0.0.0-20250808145144-a408d31f581a // indirect
 	golang.org/x/mod v0.27.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/sys v0.37.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
