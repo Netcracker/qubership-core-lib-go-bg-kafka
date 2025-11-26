@@ -2,16 +2,17 @@ package blue_green_kafka
 
 import (
 	"context"
+
 	bgMonitor "github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2"
 )
 
 func GuaranteeConsistencyStrategy() OffsetInheritanceStrategy {
 	return func(ctx context.Context, current GroupId, previous []groupIdWithOffset) (map[TopicPartition]OffsetAndMetadata, error) {
-		var previousStrs []string
+		var previousStrings []string
 		for _, g := range previous {
-			previousStrs = append(previousStrs, g.String())
+			previousStrings = append(previousStrings, g.String())
 		}
-		logger.InfoC(ctx, "Resolve offsets for versioned group: %s from previous stage offsets: %+v", current, previousStrs)
+		logger.InfoC(ctx, "Resolve offsets for versioned group: %s from previous stage offsets: %+v", current, previousStrings)
 		result := map[TopicPartition]OffsetAndMetadata{}
 		var err error
 		// Promote case : (ACTIVE, CANDIDATE),
