@@ -5,9 +5,9 @@ go 1.25.7
 require (
 	github.com/docker/go-connections v0.6.0
 	github.com/golang/mock v1.6.0
-	github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2 v2.5.0
-	github.com/netcracker/qubership-core-lib-go-rest-utils/v2 v2.4.0
-	github.com/netcracker/qubership-core-lib-go/v3 v3.6.0
+	github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2 v2.5.1
+	github.com/netcracker/qubership-core-lib-go-rest-utils/v2 v2.4.1
+	github.com/netcracker/qubership-core-lib-go/v3 v3.7.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go/modules/kafka v0.40.0
 )
