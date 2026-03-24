@@ -3,9 +3,10 @@ package blue_green_kafka
 import (
 	"context"
 	"fmt"
-	bgMonitor "github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2"
 	"strings"
 	"time"
+
+	bgMonitor "github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2"
 )
 
 type offsetCorrector struct {
@@ -45,7 +46,7 @@ func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
 				strategy = oc.candidateOffsetSetupStrategy
 			default:
 				strategy = Rewind(5 * time.Minute)
-				logger.WarnC(ctx, "No proposed offset resolved for state '%s'. Using default: '%v'", vg.State, strategy)
+				logger.WarnC(ctx, "No proposed offset resolved for state '%v'. Using default: '%v'", vg.State, strategy)
 			}
 		}
 		proposedOffset, err = oc.install(ctx, strategy)
