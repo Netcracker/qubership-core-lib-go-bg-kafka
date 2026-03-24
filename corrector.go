@@ -45,7 +45,7 @@ func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
 				strategy = oc.candidateOffsetSetupStrategy
 			default:
 				strategy = Rewind(5 * time.Minute)
-				logger.WarnC(ctx, "No proposed offset resolved for state '%s'. Using default: '%s'", vg.State, strategy)
+				logger.WarnC(ctx, "No proposed offset resolved for state '%s'. Using default: '%v'", vg.State, strategy)
 			}
 		}
 		proposedOffset, err = oc.install(ctx, strategy)
