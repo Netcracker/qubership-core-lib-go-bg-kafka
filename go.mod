@@ -5,9 +5,9 @@ go 1.26.2
 require (
 	github.com/docker/go-connections v0.6.0
 	github.com/golang/mock v1.6.0
-	github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2 v2.5.5
-	github.com/netcracker/qubership-core-lib-go-rest-utils/v2 v2.5.0
-	github.com/netcracker/qubership-core-lib-go/v3 v3.8.0
+	github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2 v2.5.6
+	github.com/netcracker/qubership-core-lib-go-rest-utils/v2 v2.5.1
+	github.com/netcracker/qubership-core-lib-go/v3 v3.8.1
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go/modules/kafka v0.41.0
 )
@@ -40,7 +40,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
-	github.com/hashicorp/consul/api v1.34.0 // indirect
+	github.com/hashicorp/consul/api v1.34.2 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
