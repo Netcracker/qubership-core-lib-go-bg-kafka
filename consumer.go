@@ -11,6 +11,7 @@ import (
 
 	bgMonitor "github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2"
 	"github.com/netcracker/qubership-core-lib-go/v3/context-propagation/baseproviders/xversion"
+	"github.com/netcracker/qubership-core-lib-go/v3/context-propagation/baseproviders/xversionname"
 	"github.com/netcracker/qubership-core-lib-go/v3/logging"
 )
 
@@ -22,15 +23,16 @@ func init() {
 }
 
 type BgConsumer struct {
-	Config         *BgKafkaConsumerConfig
-	groupPrefix    string
-	statePublisher BGStatePublisher
-	consumer       Consumer
-	bgStateChange  *atomic.Pointer[bgMonitor.BlueGreenState]
-	bgStateActive  *bgMonitor.BlueGreenState
-	versionFilter  *Filter
-	pollMux        *sync.Mutex
-	metrics        *Metrics
+	Config            *BgKafkaConsumerConfig
+	groupPrefix       string
+	statePublisher    BGStatePublisher
+	consumer          Consumer
+	bgStateChange     *atomic.Pointer[bgMonitor.BlueGreenState]
+	bgStateActive     *bgMonitor.BlueGreenState
+	versionFilter     *Filter
+	versionNameFilter *Filter
+	pollMux           *sync.Mutex
+	metrics           *Metrics
 }
 
 func NewConsumer(ctx context.Context, topic, groupIdPrefix string,
@@ -159,7 +161,7 @@ func (c *BgConsumer) Poll(ctx context.Context, readTimeout time.Duration) (*Reco
 			cErr := c.consumer.Close()
 			logger.InfoC(ctx, "Closed previous consumer. Err: %v", cErr)
 		}
-		c.consumer, c.versionFilter, err = c.reinitializeConsumer(ctx, *state, c.Config)
+		c.consumer, c.versionFilter, c.versionNameFilter, err = c.reinitializeConsumer(ctx, *state, c.Config)
 		if err != nil {
 			c.bgStateChange.Store(state)
 			return nil, fmt.Errorf("failed to create consumer: %w", err)
@@ -185,10 +187,20 @@ func (c *BgConsumer) Poll(ctx context.Context, readTimeout time.Duration) (*Reco
 		OffsetAndMeta:  OffsetAndMetadata{Offset: msg.Offset()},
 	}
 	xVer := getXVersion(msg.Headers())
-	accepted, err := c.versionFilter.Test(xVer)
-	if err != nil {
-		// invalid version format
-		return nil, fmt.Errorf("invalid '%s' value format: %s", xversion.X_VERSION_HEADER_NAME, xVer)
+	xVerName := getXVersionName(msg.Headers())
+	// prefer the version-name header; fall back to the legacy version-number filter when it is absent
+	var accepted bool
+	if xVerName != "" {
+		accepted, err = c.versionNameFilter.Test(xVerName)
+		if err != nil {
+			return nil, fmt.Errorf("invalid '%s' value format: %s", xversionname.X_VERSION_NAME_CONTEXT_NAME, xVerName)
+		}
+	} else {
+		accepted, err = c.versionFilter.Test(xVer)
+		if err != nil {
+			// invalid version format
+			return nil, fmt.Errorf("invalid '%s' value format: %s", xversion.X_VERSION_HEADER_NAME, xVer)
+		}
 	}
 
 	c.metrics.updateMetricsOnPoll(&pollMetricsUpdate{
@@ -198,10 +210,10 @@ func (c *BgConsumer) Poll(ctx context.Context, readTimeout time.Duration) (*Reco
 		isAccepted:    accepted,
 	})
 	if accepted {
-		logger.DebugC(ctx, "Message (key='%s') '%s'='%s' is accepted by the filter", msgKey, xversion.X_VERSION_HEADER_NAME, xVer)
+		logger.DebugC(ctx, "Message (key='%s') '%s'='%s', '%s'='%s' is accepted by the filter", msgKey, xversionname.X_VERSION_NAME_CONTEXT_NAME, xVerName, xversion.X_VERSION_HEADER_NAME, xVer)
 		return &Record{Message: msg, Marker: &marker}, nil
 	} else {
-		logger.DebugC(ctx, "Message (key='%s') '%s'='%s' is declined by the filter", msgKey, xversion.X_VERSION_HEADER_NAME, xVer)
+		logger.DebugC(ctx, "Message (key='%s') '%s'='%s', '%s'='%s' is declined by the filter", msgKey, xversionname.X_VERSION_NAME_CONTEXT_NAME, xVerName, xversion.X_VERSION_HEADER_NAME, xVer)
 		return &Record{Message: nil, Marker: &marker}, nil
 	}
 }
@@ -211,9 +223,7 @@ func (c *BgConsumer) Stats() Metrics {
 	return c.metrics.snapshot()
 }
 
-func (c *BgConsumer) reinitializeConsumer(ctx context.Context, bgState bgMonitor.BlueGreenState,
-	cfg *BgKafkaConsumerConfig) (Consumer, *Filter, error) {
-
+func (c *BgConsumer) reinitializeConsumer(ctx context.Context, bgState bgMonitor.BlueGreenState, cfg *BgKafkaConsumerConfig) (Consumer, *Filter, *Filter, error) {
 	current := bgState.Current
 	var siblingNsState *bgMonitor.State
 	if bgState.Sibling != nil {
@@ -235,22 +245,31 @@ func (c *BgConsumer) reinitializeConsumer(ctx context.Context, bgState bgMonitor
 	offsetMng := offsetManager{config: *c.Config}
 	err := offsetMng.alignOffset(ctx, groupId)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	versionFilter := NewFilter(bgState)
-	logger.InfoC(ctx, "initialized version filter: %s", versionFilter.Presentation)
+	versionNameFilter := NewVersionNameFilter(bgState)
+	logger.InfoC(ctx, "initialized version filter: %s, version-name filter: %s", versionFilter.Presentation, versionNameFilter.Presentation)
 	groupIdStr := groupId.String()
 	consumer, err := cfg.ConsumerSupplier(groupIdStr)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	c.metrics.clean()
-	return consumer, versionFilter, nil
+	return consumer, versionFilter, versionNameFilter, nil
 }
 
 func getXVersion(headers []Header) string {
+	return getHeader(headers, xversion.X_VERSION_HEADER_NAME)
+}
+
+func getXVersionName(headers []Header) string {
+	return getHeader(headers, xversionname.X_VERSION_NAME_CONTEXT_NAME)
+}
+
+func getHeader(headers []Header, key string) string {
 	for _, h := range headers {
-		if strings.EqualFold(h.Key, xversion.X_VERSION_HEADER_NAME) {
+		if strings.EqualFold(h.Key, key) {
 			return string(h.Value)
 		}
 	}
