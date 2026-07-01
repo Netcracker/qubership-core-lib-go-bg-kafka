@@ -3,6 +3,7 @@ package blue_green_kafka
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	bgMonitor "github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2"
@@ -60,6 +61,34 @@ func NewFilter(bgState bgMonitor.BlueGreenState) *Filter {
 					return false, err
 				}
 				return *version == *currentVersion, nil
+			})
+		default:
+			return newFilter("false", func(v string) (bool, error) {
+				return false, fmt.Errorf("invalid state: %s", blueGreenState)
+			})
+		}
+	}
+}
+
+// NewVersionNameFilter builds a filter over the X-Version-Name header value (the BG state name:
+// ACTIVE/CANDIDATE/LEGACY). Mirrors NewFilter but matches by state name instead of version number.
+func NewVersionNameFilter(bgState bgMonitor.BlueGreenState) *Filter {
+	currentNsVersion := bgState.Current
+	siblingNsV := bgState.Sibling
+	blueGreenState := currentNsVersion.State
+	if siblingNsV == nil || siblingNsV.State == bgMonitor.StateIdle {
+		return newFilter("true", func(v string) (bool, error) { return true, nil })
+	} else {
+		switch blueGreenState {
+		case bgMonitor.StateActive:
+			siblingName := siblingNsV.State.String()
+			return newFilter("!"+siblingName, func(v string) (bool, error) {
+				return !strings.EqualFold(siblingName, v), nil
+			})
+		case bgMonitor.StateCandidate, bgMonitor.StateLegacy:
+			currentName := blueGreenState.String()
+			return newFilter(currentName, func(v string) (bool, error) {
+				return strings.EqualFold(currentName, v), nil
 			})
 		default:
 			return newFilter("false", func(v string) (bool, error) {
