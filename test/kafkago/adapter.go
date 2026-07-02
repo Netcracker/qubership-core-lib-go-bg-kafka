@@ -12,7 +12,7 @@ import (
 
 	bgKafka "github.com/netcracker/qubership-core-lib-go-bg-kafka/v3"
 	"github.com/netcracker/qubership-core-lib-go/v3/logging"
-	kafka "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go"
 )
 
 var logger logging.Logger
