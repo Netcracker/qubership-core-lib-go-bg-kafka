@@ -8,9 +8,14 @@ import (
 	"time"
 )
 
+// GroupId implementations (*VersionedGroupId, *PlainGroupId, *BG1VersionedGroupId) are
+// pointers, so comparing GroupId values with == (or using GroupId as a map key) compares
+// addresses, not group identity, and will never match a separately-parsed GroupId with the
+// same name. Use Equals (or compare String()) instead.
 type GroupId interface {
 	GetGroupIdPrefix() string
 	String() string
+	Equals(other GroupId) bool
 }
 
 type VersionedGroupId struct {
@@ -129,6 +134,10 @@ func (v *VersionedGroupId) String() string {
 		v.GroupIdPrefix, v.Version.String(), v.State.ShortString(), v.SiblingState.ShortString(), FromOffsetDateTime(v.Updated))
 }
 
+func (v *VersionedGroupId) Equals(other GroupId) bool {
+	return other != nil && v.String() == other.String()
+}
+
 func FromOffsetDateTime(dt time.Time) string {
 	return fmt.Sprintf(datePartTemplate, dt.Year(), int(dt.Month()), dt.Day(), dt.Hour(), dt.Minute(), dt.Second())
 }
@@ -171,10 +180,18 @@ func (v *BG1VersionedGroupId) String() string {
 		v.GroupIdPrefix, v.Version.String(), v.BlueGreenVersion.String(), v.Stage, v.Updated.Unix())
 }
 
+func (v *BG1VersionedGroupId) Equals(other GroupId) bool {
+	return other != nil && v.String() == other.String()
+}
+
 func (v *PlainGroupId) GetGroupIdPrefix() string {
 	return v.Name
 }
 
 func (v *PlainGroupId) String() string {
 	return v.Name
+}
+
+func (v *PlainGroupId) Equals(other GroupId) bool {
+	return other != nil && v.String() == other.String()
 }

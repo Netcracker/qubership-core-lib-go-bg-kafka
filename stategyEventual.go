@@ -18,6 +18,12 @@ func EventualStrategy() OffsetInheritanceStrategy {
 				/* non BG case */
 				result = nil
 			} else {
+				// Note: a plain group's own previously committed offsets are never present in
+				// `previous` here - the indexer can only ever index one PlainGroupId per prefix
+				// (its own, since PlainGroupId.GetGroupIdPrefix() == Name), and
+				// findPreviousStateOffset excludes the current group from its own ancestor
+				// list. Preserving an existing group's offsets is align()'s job (its exists()
+				// check short-circuits before this strategy ever runs), not this strategy's.
 				/* transition from old BG implementation */
 				// inherit from BG1 ACTIVE group
 				for _, gwo := range previous {

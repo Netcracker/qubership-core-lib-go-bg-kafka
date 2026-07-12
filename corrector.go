@@ -19,9 +19,18 @@ type offsetCorrector struct {
 }
 
 func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
-	// todo remove oldFormatBgVersionsExist() check when oldFormats versioned groups are deleted for good
-	if oc.indexer.exists(current) && (!oc.indexer.bg1VersionsExist() || oc.indexer.bg1VersionsMigrated()) {
+	topicPartitions, err := oc.topicPartitions(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get partitions: %w", err)
+	}
+	// A group that already has committed offsets for every partition of this topic must never
+	// have those offsets altered here, regardless of BG1 migration state - only the (separate)
+	// migration-marker bookkeeping below still needs to run in that case.
+	if oc.indexer.exists(current, topicPartitions) {
 		logger.InfoC(ctx, "Skip group id offsets corrections for: '%s'", current.String())
+		if oc.indexer.bg1VersionsExist() && !oc.indexer.bg1VersionsMigrated() {
+			return oc.indexer.createMigrationDoneFromBg1MarkerGroup(ctx)
+		}
 		return nil
 	}
 	prevIds := oc.indexer.findPreviousStateOffset(ctx, current)
@@ -49,7 +58,7 @@ func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
 				logger.WarnC(ctx, "No proposed offset resolved for state '%v'. Using default: '%v'", vg.State, strategy)
 			}
 		}
-		proposedOffset, err = oc.install(ctx, strategy)
+		proposedOffset, err = oc.install(ctx, strategy, topicPartitions)
 		if err != nil {
 			return fmt.Errorf("failed to install offsets: %w", err)
 		}
@@ -65,21 +74,29 @@ func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
 	return nil
 }
 
-func (oc *offsetCorrector) install(ctx context.Context, strategy OffsetSetupStrategy) (map[TopicPartition]OffsetAndMetadata, error) {
-	logger.InfoC(ctx, "Installing by strategy: %+v", strategy)
-	var topicPartitions []TopicPartition
+// topicPartitions fetches the current set of partitions for this corrector's topic, used both
+// to decide whether a group already has complete offsets (see exists()) and, if not, as the
+// partition set to install offsets for.
+func (oc *offsetCorrector) topicPartitions(ctx context.Context) ([]TopicPartition, error) {
 	partitions, err := oc.admin.PartitionsFor(ctx, oc.topic)
-	logger.InfoC(ctx, "topic: '%s' partitions=%+v", oc.topic, partitions)
 	if err != nil {
 		return nil, err
 	}
+	logger.InfoC(ctx, "topic: '%s' partitions=%+v", oc.topic, partitions)
+	topicPartitions := make([]TopicPartition, 0, len(partitions))
 	for _, pi := range partitions {
 		topicPartitions = append(topicPartitions, TopicPartition{
 			Partition: pi.Partition,
 			Topic:     pi.Topic,
 		})
 	}
+	return topicPartitions, nil
+}
+
+func (oc *offsetCorrector) install(ctx context.Context, strategy OffsetSetupStrategy, topicPartitions []TopicPartition) (map[TopicPartition]OffsetAndMetadata, error) {
+	logger.InfoC(ctx, "Installing by strategy: %+v", strategy)
 	var offsets map[TopicPartition]int64
+	var err error
 	if strategy == StrategyEarliest {
 		logger.InfoC(ctx, "Calculating BeginningOffsets")
 		offsets, err = oc.admin.BeginningOffsets(ctx, topicPartitions)
@@ -87,6 +104,11 @@ func (oc *offsetCorrector) install(ctx context.Context, strategy OffsetSetupStra
 			return nil, fmt.Errorf("failed to calculate BeginningOffsets: %w", err)
 		}
 		logger.InfoC(ctx, "Calculated BeginningOffsets=%+v", offsets)
+		for _, tp := range topicPartitions {
+			if _, ok := offsets[tp]; !ok {
+				return nil, fmt.Errorf("no BeginningOffsets result for partition %+v", tp)
+			}
+		}
 	} else if strategy == StrategyLatest {
 		logger.InfoC(ctx, "Calculating EndOffsets")
 		offsets, err = oc.admin.EndOffsets(ctx, topicPartitions)
@@ -94,6 +116,11 @@ func (oc *offsetCorrector) install(ctx context.Context, strategy OffsetSetupStra
 			return nil, fmt.Errorf("failed to calculate EndOffsets: %w", err)
 		}
 		logger.InfoC(ctx, "Calculated EndOffsets=%+v", offsets)
+		for _, tp := range topicPartitions {
+			if _, ok := offsets[tp]; !ok {
+				return nil, fmt.Errorf("no EndOffsets result for partition %+v", tp)
+			}
+		}
 	} else {
 		query := map[TopicPartition]time.Time{}
 		for _, e := range topicPartitions {
@@ -116,9 +143,14 @@ func (oc *offsetCorrector) install(ctx context.Context, strategy OffsetSetupStra
 		}
 		logger.InfoC(ctx, "Calculated EndOffsets=%+v", fallback)
 		offsets = map[TopicPartition]int64{}
-		for topicPart, offsetTime := range found {
-			if offsetTime == nil {
-				offsets[topicPart] = fallback[topicPart]
+		for _, topicPart := range topicPartitions {
+			offsetTime, ok := found[topicPart]
+			if !ok || offsetTime == nil {
+				fallbackOffset, ok := fallback[topicPart]
+				if !ok {
+					return nil, fmt.Errorf("no EndOffsets fallback available for partition %+v", topicPart)
+				}
+				offsets[topicPart] = fallbackOffset
 			} else {
 				offsets[topicPart] = offsetTime.Offset
 			}

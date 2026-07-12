@@ -83,9 +83,95 @@ func TestOffsetIndexer_exists(t *testing.T) {
 		assertions.NoError(err)
 
 		groupId := MustParseGroupId("nonexistent-group")
-		result := indexer.exists(groupId)
+		result := indexer.exists(groupId, []TopicPartition{{Partition: 0, Topic: "test-topic"}})
 		assertions.False(result)
 	})
+
+	t.Run("should return true when group exists, even parsed as a distinct GroupId instance", func(t *testing.T) {
+		// Regression test: GroupId implementations are pointers allocated fresh by
+		// ParseGroupId, so exists() must compare by content (GroupId.String()), not by
+		// the GroupId interface value's address, or an existing group would never be
+		// recognized as already indexed.
+		nativeAdminAdapter := NewMockNativeAdminAdapter(gomock.NewController(t))
+		nativeAdminAdapter.EXPECT().ListConsumerGroups(gomock.Any()).Return([]ConsumerGroup{
+			{GroupId: "test"},
+		}, nil)
+		nativeAdminAdapter.EXPECT().ListConsumerGroupOffsets(gomock.Any(), "test").Return(
+			map[TopicPartition]OffsetAndMetadata{{Partition: 0, Topic: "test-topic"}: {Offset: 42}}, nil)
+
+		indexer, err := newOffsetIndexer(ctx, "test", "test-topic", nativeAdminAdapter)
+		assertions.NoError(err)
+
+		search, err := ParseGroupId("test") // freshly allocated, distinct pointer from the one indexed above
+		assertions.NoError(err)
+		result := indexer.exists(search, []TopicPartition{{Partition: 0, Topic: "test-topic"}})
+		assertions.True(result)
+	})
+
+	t.Run("should return false when the group has offsets on only a subset of the requested partitions", func(t *testing.T) {
+		// Regression test: a group that has only partially committed offsets (e.g. a topic
+		// partition count increase, or a crash mid-alter) must not be treated as fully
+		// initialized, or the missing partitions would never get an install/inherit pass.
+		nativeAdminAdapter := NewMockNativeAdminAdapter(gomock.NewController(t))
+		nativeAdminAdapter.EXPECT().ListConsumerGroups(gomock.Any()).Return([]ConsumerGroup{
+			{GroupId: "test"},
+		}, nil)
+		nativeAdminAdapter.EXPECT().ListConsumerGroupOffsets(gomock.Any(), "test").Return(
+			map[TopicPartition]OffsetAndMetadata{{Partition: 0, Topic: "test-topic"}: {Offset: 42}}, nil)
+
+		indexer, err := newOffsetIndexer(ctx, "test", "test-topic", nativeAdminAdapter)
+		assertions.NoError(err)
+
+		search := MustParseGroupId("test")
+		result := indexer.exists(search, []TopicPartition{
+			{Partition: 0, Topic: "test-topic"},
+			{Partition: 1, Topic: "test-topic"}, // no committed offset for this partition
+		})
+		assertions.False(result)
+	})
+
+	t.Run("should return false when the group's committed offsets are for a different topic", func(t *testing.T) {
+		// Regression test: offsetsIndexerImpl.topic must actually be used to filter
+		// ListConsumerGroupOffsets results. A group id shared across topics (or one that
+		// only ever consumed a different topic) must not be treated as existing for this
+		// indexer's topic merely because Kafka has some committed offsets under that name.
+		nativeAdminAdapter := NewMockNativeAdminAdapter(gomock.NewController(t))
+		nativeAdminAdapter.EXPECT().ListConsumerGroups(gomock.Any()).Return([]ConsumerGroup{
+			{GroupId: "test"},
+		}, nil)
+		nativeAdminAdapter.EXPECT().ListConsumerGroupOffsets(gomock.Any(), "test").Return(
+			map[TopicPartition]OffsetAndMetadata{{Partition: 0, Topic: "other-topic"}: {Offset: 42}}, nil)
+
+		indexer, err := newOffsetIndexer(ctx, "test", "test-topic", nativeAdminAdapter)
+		assertions.NoError(err)
+
+		search := MustParseGroupId("test")
+		result := indexer.exists(search, []TopicPartition{{Partition: 0, Topic: "test-topic"}})
+		assertions.False(result)
+	})
+}
+
+func TestOffsetIndexer_findPreviousStateOffset_excludesCurrentGroup(t *testing.T) {
+	assertions := require.New(t)
+	ctx := context.Background()
+
+	// Regression test: a plain group must never be offered its own committed offsets as
+	// an "ancestor" merely because the current GroupId is a distinct, freshly-parsed
+	// pointer with the same name as the one already indexed.
+	nativeAdminAdapter := NewMockNativeAdminAdapter(gomock.NewController(t))
+	nativeAdminAdapter.EXPECT().ListConsumerGroups(gomock.Any()).Return([]ConsumerGroup{
+		{GroupId: "test"},
+	}, nil)
+	nativeAdminAdapter.EXPECT().ListConsumerGroupOffsets(gomock.Any(), "test").Return(
+		map[TopicPartition]OffsetAndMetadata{{Partition: 0, Topic: "test-topic"}: {Offset: 42}}, nil)
+
+	indexer, err := newOffsetIndexer(ctx, "test", "test-topic", nativeAdminAdapter)
+	assertions.NoError(err)
+
+	current, err := ParseGroupId("test")
+	assertions.NoError(err)
+	result := indexer.findPreviousStateOffset(ctx, current)
+	assertions.Empty(result)
 }
 
 func TestOffsetIndexer_bg1VersionsExist(t *testing.T) {

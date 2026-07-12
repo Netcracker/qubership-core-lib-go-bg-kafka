@@ -77,17 +77,17 @@ func (mr *MockOffsetsIndexerMockRecorder) createMigrationDoneFromBg1MarkerGroup(
 }
 
 // exists mocks base method.
-func (m *MockOffsetsIndexer) exists(search GroupId) bool {
+func (m *MockOffsetsIndexer) exists(search GroupId, partitions []TopicPartition) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "exists", search)
+	ret := m.ctrl.Call(m, "exists", search, partitions)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
 // exists indicates an expected call of exists.
-func (mr *MockOffsetsIndexerMockRecorder) exists(search interface{}) *gomock.Call {
+func (mr *MockOffsetsIndexerMockRecorder) exists(search, partitions interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "exists", reflect.TypeOf((*MockOffsetsIndexer)(nil).exists), search)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "exists", reflect.TypeOf((*MockOffsetsIndexer)(nil).exists), search, partitions)
 }
 
 // findPreviousStateOffset mocks base method.
