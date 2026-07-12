@@ -27,7 +27,7 @@ func Test_align_groupExists_noBg1(t *testing.T) {
 	topicPartitions := []TopicPartition{{Partition: 0, Topic: "test-topic"}}
 
 	adapter.EXPECT().PartitionsFor(gomock.Any(), "test-topic").Return([]PartitionInfo{{Partition: 0, Topic: "test-topic"}}, nil)
-	indexer.EXPECT().exists(plainGroup, topicPartitions).Return(true)
+	indexer.EXPECT().committedOffsets(plainGroup).Return(map[TopicPartition]OffsetAndMetadata{topicPartitions[0]: {Offset: 100}})
 	indexer.EXPECT().bg1VersionsExist().Return(false)
 	err := corrector.align(context.Background(), plainGroup)
 	assertions.NoError(err)
@@ -50,7 +50,7 @@ func Test_align_groupExists_Bg1Migrated(t *testing.T) {
 	topicPartitions := []TopicPartition{{Partition: 0, Topic: "test-topic"}}
 
 	adapter.EXPECT().PartitionsFor(gomock.Any(), "test-topic").Return([]PartitionInfo{{Partition: 0, Topic: "test-topic"}}, nil)
-	indexer.EXPECT().exists(plainGroup, topicPartitions).Return(true)
+	indexer.EXPECT().committedOffsets(plainGroup).Return(map[TopicPartition]OffsetAndMetadata{topicPartitions[0]: {Offset: 100}})
 	indexer.EXPECT().bg1VersionsExist().Return(true)
 	indexer.EXPECT().bg1VersionsMigrated().Return(true)
 
@@ -77,7 +77,7 @@ func Test_align_groupExists_Bg1NotMigrated(t *testing.T) {
 	topicPartitions := []TopicPartition{{Partition: 0, Topic: "test-topic"}}
 
 	adapter.EXPECT().PartitionsFor(gomock.Any(), "test-topic").Return([]PartitionInfo{{Partition: 0, Topic: "test-topic"}}, nil)
-	indexer.EXPECT().exists(plainGroup, topicPartitions).Return(true)
+	indexer.EXPECT().committedOffsets(plainGroup).Return(map[TopicPartition]OffsetAndMetadata{topicPartitions[0]: {Offset: 100}})
 	indexer.EXPECT().bg1VersionsExist().Return(true)
 	indexer.EXPECT().bg1VersionsMigrated().Return(false)
 	indexer.EXPECT().createMigrationDoneFromBg1MarkerGroup(gomock.Any()).Return(nil)
@@ -104,7 +104,7 @@ func Test_align_groupNotExists(t *testing.T) {
 	topicPartitions := []TopicPartition{{Partition: 0, Topic: "test-topic"}}
 
 	adapter.EXPECT().PartitionsFor(gomock.Any(), "test-topic").Return([]PartitionInfo{{Partition: 0, Topic: "test-topic"}}, nil)
-	indexer.EXPECT().exists(plainGroup, topicPartitions).Return(false)
+	indexer.EXPECT().committedOffsets(plainGroup).Return(nil)
 	indexer.EXPECT().findPreviousStateOffset(gomock.Any(), plainGroup).Return([]groupIdWithOffset{})
 	adapter.EXPECT().EndOffsets(gomock.Any(), topicPartitions).Return(map[TopicPartition]int64{{Partition: 0, Topic: "test-topic"}: 100}, nil)
 	adapter.EXPECT().AlterConsumerGroupOffsets(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
@@ -115,8 +115,8 @@ func Test_align_groupNotExists(t *testing.T) {
 }
 
 // A plain group with committed offsets on multiple partitions must survive a consumer
-// restart untouched (exists()/findPreviousStateOffset() used to compare GroupId by pointer
-// identity, so a freshly re-parsed GroupId was never recognized as already existing).
+// restart untouched (the indexer lookup and findPreviousStateOffset() used to compare GroupId
+// by pointer identity, so a freshly re-parsed GroupId was never recognized as already existing).
 func Test_align_existingPlainGroupWithMultiplePartitions_survivesRestart(t *testing.T) {
 	assertions := require.New(t)
 	ctx := context.Background()
@@ -153,6 +153,50 @@ func Test_align_existingPlainGroupWithMultiplePartitions_survivesRestart(t *test
 		{Partition: 0, Topic: "test-topic"}, {Partition: 1, Topic: "test-topic"},
 	}, nil)
 	// no OffsetsForTimes/EndOffsets/AlterConsumerGroupOffsets expectations: skip correction entirely
+	err = corrector.align(ctx, current)
+	assertions.NoError(err)
+}
+
+// When partitions are added to the topic after a group last committed, offsets are installed
+// for the new partitions only; the group's existing committed offsets stay untouched.
+func Test_align_existingGroupWithNewPartitions_installsOffsetsForNewPartitionsOnly(t *testing.T) {
+	assertions := require.New(t)
+	ctx := context.Background()
+	controller := gomock.NewController(t)
+	adapter := NewMockNativeAdminAdapter(controller)
+
+	groupName := "test-plain-group"
+	committedPartition := TopicPartition{Partition: 0, Topic: "test-topic"}
+	newPartition := TopicPartition{Partition: 1, Topic: "test-topic"}
+	adapter.EXPECT().ListConsumerGroups(gomock.Any()).Return([]ConsumerGroup{
+		{GroupId: groupName},
+	}, nil)
+	adapter.EXPECT().ListConsumerGroupOffsets(gomock.Any(), groupName).Return(
+		map[TopicPartition]OffsetAndMetadata{committedPartition: {Offset: 100}}, nil)
+
+	indexer, err := newOffsetIndexer(ctx, groupName, "test-topic", adapter)
+	assertions.NoError(err)
+
+	corrector := &offsetCorrector{
+		topic:                        "test-topic",
+		indexer:                      indexer,
+		inherit:                      EventualStrategy(),
+		admin:                        adapter,
+		activeOffsetSetupStrategy:    StrategyLatest,
+		candidateOffsetSetupStrategy: StrategyLatest,
+	}
+	current, err := ParseGroupId(groupName)
+	assertions.NoError(err)
+
+	adapter.EXPECT().PartitionsFor(gomock.Any(), "test-topic").Return([]PartitionInfo{
+		{Partition: 0, Topic: "test-topic"}, {Partition: 1, Topic: "test-topic"},
+	}, nil)
+	// install and alter cover the new partition only; the committed one is never queried or altered
+	adapter.EXPECT().EndOffsets(gomock.Any(), []TopicPartition{newPartition}).Return(
+		map[TopicPartition]int64{newPartition: 999}, nil)
+	adapter.EXPECT().AlterConsumerGroupOffsets(gomock.Any(), current,
+		map[TopicPartition]OffsetAndMetadata{newPartition: {Offset: 999}}).Return(nil)
+
 	err = corrector.align(ctx, current)
 	assertions.NoError(err)
 }

@@ -29,6 +29,9 @@ type Result struct {
 }
 
 type Consumer interface {
+	// ReadMessage never redelivers within a session: the read position only moves forward,
+	// whether or not the message is committed. Callers must retry a failed message in place,
+	// not by calling ReadMessage again — once a later offset commits, the message is lost.
 	ReadMessage(context.Context) (Message, error)
 	Commit(ctx context.Context, marker *CommitMarker) error
 	Close() error

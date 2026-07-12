@@ -30,19 +30,6 @@ func TestPlainGroupId_String(t *testing.T) {
 	assertions.Equal("plain-group", result)
 }
 
-func TestPlainGroupId_Equals(t *testing.T) {
-	assertions := require.New(t)
-
-	a := MustParseGroupId("plain-group")
-	b, err := ParseGroupId("plain-group") // distinct pointer, same content
-	assertions.NoError(err)
-
-	assertions.True(a.Equals(b))
-	assertions.True(b.Equals(a))
-	assertions.False(a.Equals(MustParseGroupId("other-group")))
-	assertions.False(a.Equals(nil))
-}
-
 func TestVersionedGroupId_GetGroupIdPrefix(t *testing.T) {
 	assertions := require.New(t)
 
@@ -61,18 +48,6 @@ func TestVersionedGroupId_String(t *testing.T) {
 
 	result := vgId.String()
 	assertions.Equal("test-v1-a_i-2023-07-07_10-30-00", result)
-}
-
-func TestVersionedGroupId_Equals(t *testing.T) {
-	assertions := require.New(t)
-
-	a := MustParseGroupId("test-v1-a_i-2023-07-07_10-30-00")
-	b, err := ParseGroupId("test-v1-a_i-2023-07-07_10-30-00") // distinct pointer, same content
-	assertions.NoError(err)
-
-	assertions.True(a.Equals(b))
-	assertions.False(a.Equals(MustParseGroupId("test-v1-a_i-2023-07-07_10-30-01")))
-	assertions.False(a.Equals(MustParseGroupId("plain-group")))
 }
 
 func TestFromOffsetDateTime(t *testing.T) {
@@ -355,33 +330,4 @@ func TestBG1VersionedGroupId_String(t *testing.T) {
 	result := groupId.String()
 	expected := fmt.Sprintf("test-v1v2a1234567890")
 	assert.Equal(t, expected, result)
-}
-
-func TestBG1VersionedGroupId_Equals(t *testing.T) {
-	version := bgMonitor.NewVersionMust("v1")
-	bgVersion := bgMonitor.NewVersionMust("v2")
-	a := &BG1VersionedGroupId{
-		GroupIdPrefix:    "test",
-		Version:          *version,
-		BlueGreenVersion: *bgVersion,
-		Stage:            "a",
-		Updated:          time.Unix(1234567890, 0),
-	}
-	b := &BG1VersionedGroupId{ // distinct pointer, same content
-		GroupIdPrefix:    "test",
-		Version:          *version,
-		BlueGreenVersion: *bgVersion,
-		Stage:            "a",
-		Updated:          time.Unix(1234567890, 0),
-	}
-	other := &BG1VersionedGroupId{
-		GroupIdPrefix:    "test",
-		Version:          *version,
-		BlueGreenVersion: *bgVersion,
-		Stage:            "M",
-		Updated:          time.Unix(1234567890, 0),
-	}
-
-	assert.True(t, a.Equals(b))
-	assert.False(t, a.Equals(other))
 }

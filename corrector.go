@@ -23,10 +23,29 @@ func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
 	if err != nil {
 		return fmt.Errorf("failed to get partitions: %w", err)
 	}
-	// An existing group's offsets are never altered here, regardless of BG1 state; only
-	// migration-marker bookkeeping below still runs for it.
-	if oc.indexer.exists(current, topicPartitions) {
-		logger.InfoC(ctx, "Skip group id offsets corrections for: '%s'", current.String())
+	// An existing group's committed offsets are never altered here, regardless of BG1 state.
+	// Only partitions without a committed offset (e.g. added to the topic after the group
+	// last committed) get offsets installed; migration-marker bookkeeping still runs.
+	if committed := oc.indexer.committedOffsets(current); len(committed) > 0 {
+		var missing []TopicPartition
+		for _, tp := range topicPartitions {
+			if _, ok := committed[tp]; !ok {
+				missing = append(missing, tp)
+			}
+		}
+		if len(missing) == 0 {
+			logger.InfoC(ctx, "Skip group id offsets corrections for: '%s'", current.String())
+		} else {
+			logger.InfoC(ctx, "Group '%s' has no committed offsets for partitions %+v, installing offsets for them only", current.String(), missing)
+			proposedOffset, err := oc.install(ctx, oc.setupStrategy(ctx, current), missing)
+			if err != nil {
+				return fmt.Errorf("failed to install offsets: %w", err)
+			}
+			logger.InfoC(ctx, "Alter group %s offset to %+v", current, proposedOffset)
+			if err = oc.admin.AlterConsumerGroupOffsets(ctx, current, proposedOffset); err != nil {
+				return fmt.Errorf("failed to alter consumer group: %w", err)
+			}
+		}
 		if oc.indexer.bg1VersionsExist() && !oc.indexer.bg1VersionsMigrated() {
 			return oc.indexer.createMigrationDoneFromBg1MarkerGroup(ctx)
 		}
@@ -43,21 +62,7 @@ func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
 		return fmt.Errorf("failed to inherit offsets: %w", err)
 	}
 	if len(proposedOffset) == 0 {
-		var strategy OffsetSetupStrategy
-		if _, ok := current.(*PlainGroupId); ok {
-			strategy = oc.activeOffsetSetupStrategy
-		} else if vg, ok := current.(*VersionedGroupId); ok {
-			switch vg.State {
-			case bgMonitor.StateActive:
-				strategy = oc.activeOffsetSetupStrategy
-			case bgMonitor.StateCandidate:
-				strategy = oc.candidateOffsetSetupStrategy
-			default:
-				strategy = Rewind(5 * time.Minute)
-				logger.WarnC(ctx, "No proposed offset resolved for state '%v'. Using default: '%v'", vg.State, strategy)
-			}
-		}
-		proposedOffset, err = oc.install(ctx, strategy, topicPartitions)
+		proposedOffset, err = oc.install(ctx, oc.setupStrategy(ctx, current), topicPartitions)
 		if err != nil {
 			return fmt.Errorf("failed to install offsets: %w", err)
 		}
@@ -73,7 +78,26 @@ func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
 	return nil
 }
 
-// topicPartitions fetches this corrector's topic partitions, used by both exists() and install().
+// setupStrategy picks the configured offset setup strategy for current's group kind and state.
+func (oc *offsetCorrector) setupStrategy(ctx context.Context, current GroupId) OffsetSetupStrategy {
+	var strategy OffsetSetupStrategy
+	if _, ok := current.(*PlainGroupId); ok {
+		strategy = oc.activeOffsetSetupStrategy
+	} else if vg, ok := current.(*VersionedGroupId); ok {
+		switch vg.State {
+		case bgMonitor.StateActive:
+			strategy = oc.activeOffsetSetupStrategy
+		case bgMonitor.StateCandidate:
+			strategy = oc.candidateOffsetSetupStrategy
+		default:
+			strategy = Rewind(5 * time.Minute)
+			logger.WarnC(ctx, "No proposed offset resolved for state '%v'. Using default: '%v'", vg.State, strategy)
+		}
+	}
+	return strategy
+}
+
+// topicPartitions fetches this corrector's topic partitions, used by align() and install().
 func (oc *offsetCorrector) topicPartitions(ctx context.Context) ([]TopicPartition, error) {
 	partitions, err := oc.admin.PartitionsFor(ctx, oc.topic)
 	if err != nil {

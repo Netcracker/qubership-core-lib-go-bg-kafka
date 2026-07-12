@@ -10,8 +10,9 @@ import (
 //go:generate mockgen -source=indexer.go -destination=indexer_mock.go -package=blue_green_kafka -mock_names=offsetsIndexer=MockOffsetsIndexer
 
 type offsetsIndexer interface {
-	// exists reports whether search already has committed offsets for every one of partitions.
-	exists(search GroupId, partitions []TopicPartition) bool
+	// committedOffsets returns the offsets search has committed for the indexer's topic,
+	// or nil when the group has none.
+	committedOffsets(search GroupId) map[TopicPartition]OffsetAndMetadata
 	bg1VersionsExist() bool
 	bg1VersionsMigrated() bool
 	findPreviousStateOffset(ctx context.Context, current GroupId) []groupIdWithOffset
@@ -78,17 +79,11 @@ func newOffsetIndexer(ctx context.Context, groupIdPrefix string, topic string, a
 	return &offsetsIndexerImpl{topic: topic, index: index, admin: adminAdapter}, nil
 }
 
-func (indexer *offsetsIndexerImpl) exists(search GroupId, partitions []TopicPartition) bool {
-	e, ok := indexer.index[search.String()]
-	if !ok {
-		return false
+func (indexer *offsetsIndexerImpl) committedOffsets(search GroupId) map[TopicPartition]OffsetAndMetadata {
+	if e, ok := indexer.index[search.String()]; ok {
+		return e.offset
 	}
-	for _, tp := range partitions {
-		if _, ok := e.offset[tp]; !ok {
-			return false
-		}
-	}
-	return true
+	return nil
 }
 
 func (indexer *offsetsIndexerImpl) bg1VersionsExist() bool {

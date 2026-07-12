@@ -76,18 +76,18 @@ func (mr *MockOffsetsIndexerMockRecorder) createMigrationDoneFromBg1MarkerGroup(
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "createMigrationDoneFromBg1MarkerGroup", reflect.TypeOf((*MockOffsetsIndexer)(nil).createMigrationDoneFromBg1MarkerGroup), ctx)
 }
 
-// exists mocks base method.
-func (m *MockOffsetsIndexer) exists(search GroupId, partitions []TopicPartition) bool {
+// committedOffsets mocks base method.
+func (m *MockOffsetsIndexer) committedOffsets(search GroupId) map[TopicPartition]OffsetAndMetadata {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "exists", search, partitions)
-	ret0, _ := ret[0].(bool)
+	ret := m.ctrl.Call(m, "committedOffsets", search)
+	ret0, _ := ret[0].(map[TopicPartition]OffsetAndMetadata)
 	return ret0
 }
 
-// exists indicates an expected call of exists.
-func (mr *MockOffsetsIndexerMockRecorder) exists(search, partitions interface{}) *gomock.Call {
+// committedOffsets indicates an expected call of committedOffsets.
+func (mr *MockOffsetsIndexerMockRecorder) committedOffsets(search interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "exists", reflect.TypeOf((*MockOffsetsIndexer)(nil).exists), search, partitions)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "committedOffsets", reflect.TypeOf((*MockOffsetsIndexer)(nil).committedOffsets), search)
 }
 
 // findPreviousStateOffset mocks base method.
