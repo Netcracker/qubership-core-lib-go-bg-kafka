@@ -103,6 +103,24 @@ func TestOffsetIndexer_committedOffsets(t *testing.T) {
 		assertions.Equal(map[TopicPartition]OffsetAndMetadata{{Partition: 0, Topic: "test-topic"}: {Offset: 42}}, result)
 	})
 
+	t.Run("should exclude partitions reported with a negative (uncommitted) sentinel offset", func(t *testing.T) {
+		nativeAdminAdapter := NewMockNativeAdminAdapter(gomock.NewController(t))
+		nativeAdminAdapter.EXPECT().ListConsumerGroups(gomock.Any()).Return([]ConsumerGroup{
+			{GroupId: "test"},
+		}, nil)
+		nativeAdminAdapter.EXPECT().ListConsumerGroupOffsets(gomock.Any(), "test").Return(
+			map[TopicPartition]OffsetAndMetadata{
+				{Partition: 0, Topic: "test-topic"}: {Offset: 42},
+				{Partition: 1, Topic: "test-topic"}: {Offset: -1}, // no committed offset
+			}, nil)
+
+		indexer, err := newOffsetIndexer(ctx, "test", "test-topic", nativeAdminAdapter)
+		assertions.NoError(err)
+
+		result := indexer.committedOffsets(MustParseGroupId("test"))
+		assertions.Equal(map[TopicPartition]OffsetAndMetadata{{Partition: 0, Topic: "test-topic"}: {Offset: 42}}, result)
+	})
+
 	t.Run("should return nil when the group's committed offsets are for a different topic", func(t *testing.T) {
 		nativeAdminAdapter := NewMockNativeAdminAdapter(gomock.NewController(t))
 		nativeAdminAdapter.EXPECT().ListConsumerGroups(gomock.Any()).Return([]ConsumerGroup{

@@ -39,6 +39,9 @@ type Consumer interface {
 
 type NativeAdminAdapter interface {
 	ListConsumerGroups(ctx context.Context) ([]ConsumerGroup, error)
+	// ListConsumerGroupOffsets returns only partitions the group has actually committed on;
+	// a partition without a committed offset must be omitted, not reported with a negative
+	// sentinel offset.
 	ListConsumerGroupOffsets(ctx context.Context, groupId string) (map[TopicPartition]OffsetAndMetadata, error)
 	AlterConsumerGroupOffsets(ctx context.Context, groupIdPrefix GroupId, proposedOffsets map[TopicPartition]OffsetAndMetadata) error
 	PartitionsFor(ctx context.Context, topics ...string) ([]PartitionInfo, error)

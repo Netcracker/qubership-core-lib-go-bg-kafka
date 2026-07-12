@@ -62,10 +62,11 @@ func newOffsetIndexer(ctx context.Context, groupIdPrefix string, topic string, a
 		if err != nil {
 			return nil, fmt.Errorf("failed to list consumer group offsets: %w", err)
 		}
-		// a group id can carry offsets for other topics too; only ours are relevant here
+		// a group id can carry offsets for other topics too; only ours are relevant here.
+		// A negative offset is Kafka's "no committed offset" sentinel, not a commit.
 		topicOffsets := make(map[TopicPartition]OffsetAndMetadata, len(offsets))
 		for tp, o := range offsets {
-			if tp.Topic == topic {
+			if tp.Topic == topic && o.Offset >= 0 {
 				topicOffsets[tp] = o
 			}
 		}
