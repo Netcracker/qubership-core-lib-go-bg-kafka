@@ -8,10 +8,7 @@ import (
 	"time"
 )
 
-// GroupId implementations (*VersionedGroupId, *PlainGroupId, *BG1VersionedGroupId) are
-// pointers, so comparing GroupId values with == (or using GroupId as a map key) compares
-// addresses, not group identity, and will never match a separately-parsed GroupId with the
-// same name. Use Equals (or compare String()) instead.
+// GroupId implementations are pointers: compare with Equals (or String()), never ==.
 type GroupId interface {
 	GetGroupIdPrefix() string
 	String() string

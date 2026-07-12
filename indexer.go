@@ -20,9 +20,8 @@ type offsetsIndexer interface {
 
 type offsetsIndexerImpl struct {
 	topic string
-	// keyed by GroupId.String() rather than the GroupId interface value itself: GroupId
-	// implementations are pointers, so map keys of type GroupId compare by address, not
-	// by content, and would never match a freshly-parsed GroupId with the same name.
+	// keyed by GroupId.String(): GroupId is pointer-typed, so using it directly as a map
+	// key would compare by address, not by the group it identifies.
 	index map[string]groupIdWithOffset
 	admin NativeAdminAdapter
 }
@@ -62,9 +61,7 @@ func newOffsetIndexer(ctx context.Context, groupIdPrefix string, topic string, a
 		if err != nil {
 			return nil, fmt.Errorf("failed to list consumer group offsets: %w", err)
 		}
-		// A consumer group can carry committed offsets for topics other than this indexer's
-		// topic (e.g. the same group id used across topics). Only offsets for our own topic
-		// are relevant to ancestor lookup and to "does this group already exist" checks.
+		// a group id can carry offsets for other topics too; only ours are relevant here
 		topicOffsets := make(map[TopicPartition]OffsetAndMetadata, len(offsets))
 		for tp, o := range offsets {
 			if tp.Topic == topic {
@@ -72,9 +69,7 @@ func newOffsetIndexer(ctx context.Context, groupIdPrefix string, topic string, a
 			}
 		}
 		if len(topicOffsets) == 0 {
-			// no committed offsets for this topic; treat the group as not yet indexed so the
-			// corrector still runs initial installation/inheritance for it
-			continue
+			continue // no offsets for this topic; treat as not yet indexed
 		}
 		logger.InfoC(ctx, "Offsets=%+v", topicOffsets)
 		logger.InfoC(ctx, "Adding to index groupId=%s with offset: %+v", groupId.String(), topicOffsets)

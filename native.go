@@ -42,8 +42,6 @@ type NativeAdminAdapter interface {
 	// BeginningOffsets and EndOffsets must return an entry for every requested TopicPartition.
 	BeginningOffsets(ctx context.Context, topicPartitions []TopicPartition) (map[TopicPartition]int64, error)
 	EndOffsets(ctx context.Context, topicPartitions []TopicPartition) (map[TopicPartition]int64, error)
-	// OffsetsForTimes must return an entry for every requested TopicPartition. A partition with
-	// no record at or after the requested timestamp must map to a nil *OffsetAndTimestamp, not a
-	// fabricated offset (e.g. 0) — callers rely on nil to fall back to EndOffsets.
+	// OffsetsForTimes: same, and a partition with no matching record maps to nil, not offset 0.
 	OffsetsForTimes(ctx context.Context, times map[TopicPartition]time.Time) (map[TopicPartition]*OffsetAndTimestamp, error)
 }

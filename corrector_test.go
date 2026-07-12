@@ -58,11 +58,8 @@ func Test_align_groupExists_Bg1Migrated(t *testing.T) {
 	assertions.NoError(err)
 }
 
-// Regression test: a group that already exists must have its offsets left untouched even
-// when unmigrated BG1 groups are also present - only the (separate) migration-marker
-// bookkeeping should still run. Before the fix, this combination of conditions caused the
-// skip to be bypassed entirely, so an existing group's offsets were force-rewound via
-// install()/Rewind(5m) on every restart (see corrector.go's exists() check).
+// An existing group's offsets must stay untouched even with unmigrated BG1 groups present;
+// only migration-marker bookkeeping should run for it.
 func Test_align_groupExists_Bg1NotMigrated(t *testing.T) {
 	assertions := require.New(t)
 	controller := gomock.NewController(t)
@@ -85,8 +82,7 @@ func Test_align_groupExists_Bg1NotMigrated(t *testing.T) {
 	indexer.EXPECT().bg1VersionsMigrated().Return(false)
 	indexer.EXPECT().createMigrationDoneFromBg1MarkerGroup(gomock.Any()).Return(nil)
 
-	// No findPreviousStateOffset/EndOffsets/AlterConsumerGroupOffsets expectations are set:
-	// the existing group's offsets must never be touched, only the migration marker created.
+	// no findPreviousStateOffset/EndOffsets/AlterConsumerGroupOffsets expectations: offsets stay untouched
 	err := corrector.align(context.Background(), plainGroup)
 	assertions.NoError(err)
 }
@@ -118,22 +114,19 @@ func Test_align_groupNotExists(t *testing.T) {
 	assertions.NoError(err)
 }
 
-// Regression test for the production incident: a plain (non blue-green) group with
-// committed offsets on multiple partitions must survive a consumer restart untouched.
-// Before the fix, offsetsIndexerImpl.exists() and findPreviousStateOffset() compared
-// GroupId values by pointer identity, so a freshly re-parsed GroupId with the same name
-// as an already-committed group was never recognized as existing, fell through to the
-// install path, and had its offsets force-rewound via Rewind(5m).
+// A plain group with committed offsets on multiple partitions must survive a consumer
+// restart untouched (exists()/findPreviousStateOffset() used to compare GroupId by pointer
+// identity, so a freshly re-parsed GroupId was never recognized as already existing).
 func Test_align_existingPlainGroupWithMultiplePartitions_survivesRestart(t *testing.T) {
 	assertions := require.New(t)
 	ctx := context.Background()
 	controller := gomock.NewController(t)
 	adapter := NewMockNativeAdminAdapter(controller)
 
-	groupName := "history-events-a4c9373f"
+	groupName := "test-plain-group-multi-partition"
 	committedOffsets := map[TopicPartition]OffsetAndMetadata{
-		{Partition: 0, Topic: "test-topic"}: {Offset: 6893},
-		{Partition: 1, Topic: "test-topic"}: {Offset: 23081},
+		{Partition: 0, Topic: "test-topic"}: {Offset: 100},
+		{Partition: 1, Topic: "test-topic"}: {Offset: 200},
 	}
 	adapter.EXPECT().ListConsumerGroups(gomock.Any()).Return([]ConsumerGroup{
 		{GroupId: groupName},
@@ -152,26 +145,20 @@ func Test_align_existingPlainGroupWithMultiplePartitions_survivesRestart(t *test
 		candidateOffsetSetupStrategy: Rewind(5 * time.Minute),
 	}
 
-	// current is a distinct GroupId instance from the one indexed above, exactly as
-	// happens on every real consumer restart (ParseGroupId / &PlainGroupId{} allocate fresh).
+	// current is a distinct GroupId instance from the one indexed above, as on every restart
 	current, err := ParseGroupId(groupName)
 	assertions.NoError(err)
 
 	adapter.EXPECT().PartitionsFor(gomock.Any(), "test-topic").Return([]PartitionInfo{
 		{Partition: 0, Topic: "test-topic"}, {Partition: 1, Topic: "test-topic"},
 	}, nil)
-	// No OffsetsForTimes/EndOffsets/AlterConsumerGroupOffsets expectations are set: the
-	// corrector must recognize the group already exists (with offsets for both partitions)
-	// and skip correction entirely.
+	// no OffsetsForTimes/EndOffsets/AlterConsumerGroupOffsets expectations: skip correction entirely
 	err = corrector.align(ctx, current)
 	assertions.NoError(err)
 }
 
-// Regression test for a residual force-rewind path: even after the group already exists, a
-// leftover unmigrated BG1 group (any stage other than active/migrated) used to bypass the
-// skip entirely and re-run install()/Rewind(5m) against the existing group's offsets. The
-// skip must now be unconditional on existence; only migration-marker creation depends on
-// BG1 state.
+// The skip must be unconditional on existence: a leftover BG1 group in a stage other than
+// active/migrated must not bypass it and force a rewind of an existing group's offsets.
 func Test_align_existingPlainGroupWithUnmigratedBg1Leftover_survivesRestart(t *testing.T) {
 	assertions := require.New(t)
 	ctx := context.Background()
@@ -182,8 +169,7 @@ func Test_align_existingPlainGroupWithUnmigratedBg1Leftover_survivesRestart(t *t
 	committedOffsets := map[TopicPartition]OffsetAndMetadata{
 		{Partition: 0, Topic: "test-topic"}: {Offset: 500},
 	}
-	// A leftover BG1 group with a non-active, non-migrated stage (e.g. "legacy"): present,
-	// but neither an active source for migration nor already marked as migrated.
+	// leftover BG1 group, stage neither active nor migrated
 	bg1LeftoverOffsets := map[TopicPartition]OffsetAndMetadata{
 		{Partition: 0, Topic: "test-topic"}: {Offset: 10},
 	}
@@ -209,10 +195,8 @@ func Test_align_existingPlainGroupWithUnmigratedBg1Leftover_survivesRestart(t *t
 	assertions.NoError(err)
 
 	adapter.EXPECT().PartitionsFor(gomock.Any(), "test-topic").Return([]PartitionInfo{{Partition: 0, Topic: "test-topic"}}, nil)
-	// No AlterConsumerGroupOffsets expectation: bg1VersionsExist()=true but
-	// bg1VersionsMigrated()=false (no active-stage BG1 group to migrate from), so
-	// createMigrationDoneFromBg1MarkerGroup logs a warning and returns nil without altering
-	// anything - the existing group's own offsets must remain untouched.
+	// no AlterConsumerGroupOffsets expectation: no active-stage BG1 group, so
+	// createMigrationDoneFromBg1MarkerGroup warns and returns nil without altering anything
 	err = corrector.align(ctx, current)
 	assertions.NoError(err)
 }
@@ -248,8 +232,7 @@ func TestOffsetCorrector_Install_StrategyEarliest_MissingPartition(t *testing.T)
 
 	ctx := context.Background()
 	topicPartitions := []TopicPartition{{Partition: 0, Topic: "test-topic"}, {Partition: 1, Topic: "test-topic"}}
-	// BeginningOffsets omits partition 1 entirely (e.g. adapter request-construction bug) -
-	// the corrector must error rather than silently omitting that partition from the alter.
+	// BeginningOffsets omits partition 1 entirely; must error, not silently drop it
 	adapter.EXPECT().BeginningOffsets(ctx, topicPartitions).Return(map[TopicPartition]int64{
 		{Partition: 0, Topic: "test-topic"}: 100,
 	}, nil)
@@ -359,8 +342,7 @@ func TestOffsetCorrector_Install_StrategyRewind_PartitionMissingFromOffsetsForTi
 	ctx := context.Background()
 	topicPartition := TopicPartition{Partition: 0, Topic: "test-topic"}
 	topicPartitions := []TopicPartition{topicPartition}
-	// The partition is entirely absent from the OffsetsForTimes response (not just present
-	// with a nil value) - the corrector must still fall back to EndOffsets for it.
+	// partition absent from the response entirely, not just nil; must still fall back
 	expectedEndOffsets := map[TopicPartition]int64{topicPartition: 200}
 
 	adapter.EXPECT().OffsetsForTimes(gomock.Any(), gomock.Any()).Return(map[TopicPartition]*OffsetAndTimestamp{}, nil)
@@ -469,8 +451,7 @@ func TestOffsetCorrector_Install_StrategyRewind_MissingFallback(t *testing.T) {
 	expectedTimes := map[TopicPartition]*OffsetAndTimestamp{topicPartition: nil} // no record at/after the timestamp
 
 	adapter.EXPECT().OffsetsForTimes(gomock.Any(), gomock.Any()).Return(expectedTimes, nil)
-	// EndOffsets omits the partition entirely (e.g. adapter request-construction bug) -
-	// the corrector must error rather than silently committing offset 0.
+	// EndOffsets fallback also omits the partition; must error, not commit offset 0
 	adapter.EXPECT().EndOffsets(ctx, topicPartitions).Return(map[TopicPartition]int64{}, nil)
 
 	result, err := corrector.install(ctx, Rewind(5*time.Minute), topicPartitions)

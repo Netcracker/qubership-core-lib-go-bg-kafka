@@ -23,9 +23,8 @@ func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
 	if err != nil {
 		return fmt.Errorf("failed to get partitions: %w", err)
 	}
-	// A group that already has committed offsets for every partition of this topic must never
-	// have those offsets altered here, regardless of BG1 migration state - only the (separate)
-	// migration-marker bookkeeping below still needs to run in that case.
+	// An existing group's offsets are never altered here, regardless of BG1 state; only
+	// migration-marker bookkeeping below still runs for it.
 	if oc.indexer.exists(current, topicPartitions) {
 		logger.InfoC(ctx, "Skip group id offsets corrections for: '%s'", current.String())
 		if oc.indexer.bg1VersionsExist() && !oc.indexer.bg1VersionsMigrated() {
@@ -74,9 +73,7 @@ func (oc *offsetCorrector) align(ctx context.Context, current GroupId) error {
 	return nil
 }
 
-// topicPartitions fetches the current set of partitions for this corrector's topic, used both
-// to decide whether a group already has complete offsets (see exists()) and, if not, as the
-// partition set to install offsets for.
+// topicPartitions fetches this corrector's topic partitions, used by both exists() and install().
 func (oc *offsetCorrector) topicPartitions(ctx context.Context) ([]TopicPartition, error) {
 	partitions, err := oc.admin.PartitionsFor(ctx, oc.topic)
 	if err != nil {
