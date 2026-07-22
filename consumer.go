@@ -148,6 +148,10 @@ func (c *BgConsumer) Commit(ctx context.Context, marker *CommitMarker) error {
 	return nil
 }
 
+// Poll returns the next record; a record is never redelivered within a session, even if it
+// is not committed (see Consumer.ReadMessage). On a processing failure, retry the returned
+// record in place instead of calling Poll again — once a later offset on the same partition
+// commits, an uncommitted earlier record is permanently skipped.
 func (c *BgConsumer) Poll(ctx context.Context, readTimeout time.Duration) (*Record, error) {
 	c.pollMux.Lock()
 	defer c.pollMux.Unlock()

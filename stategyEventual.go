@@ -18,6 +18,8 @@ func EventualStrategy() OffsetInheritanceStrategy {
 				/* non BG case */
 				result = nil
 			} else {
+				// a plain group's own offsets are never in `previous`; preserving them is
+				// align()'s job via committedOffsets(), not this strategy's
 				/* transition from old BG implementation */
 				// inherit from BG1 ACTIVE group
 				for _, gwo := range previous {
