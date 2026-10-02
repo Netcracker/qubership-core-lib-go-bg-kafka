@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// GroupId implementations are pointers: compare String() values, never == directly.
 type GroupId interface {
 	GetGroupIdPrefix() string
 	String() string

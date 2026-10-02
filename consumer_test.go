@@ -416,13 +416,22 @@ func (m *mockAdmin) PartitionsFor(ctx context.Context, topics ...string) ([]Part
 	return []PartitionInfo{{Topic: "test-topic", Partition: 0}}, nil
 }
 func (m *mockAdmin) BeginningOffsets(ctx context.Context, topicPartitions []TopicPartition) (map[TopicPartition]int64, error) {
-	return nil, nil
+	return offsetsFor(topicPartitions, 0), nil
 }
 func (m *mockAdmin) EndOffsets(ctx context.Context, topicPartitions []TopicPartition) (map[TopicPartition]int64, error) {
-	return nil, nil
+	return offsetsFor(topicPartitions, 0), nil
 }
 func (m *mockAdmin) OffsetsForTimes(ctx context.Context, times map[TopicPartition]time.Time) (map[TopicPartition]*OffsetAndTimestamp, error) {
 	return nil, nil
+}
+
+// offsetsFor mimics a real broker response: an entry for every requested partition.
+func offsetsFor(topicPartitions []TopicPartition, offset int64) map[TopicPartition]int64 {
+	result := make(map[TopicPartition]int64, len(topicPartitions))
+	for _, tp := range topicPartitions {
+		result[tp] = offset
+	}
+	return result
 }
 
 func TestBgConsumer_Stats(t *testing.T) {

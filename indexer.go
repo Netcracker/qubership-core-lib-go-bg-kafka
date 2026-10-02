@@ -3,7 +3,6 @@ package blue_green_kafka
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
@@ -11,7 +10,9 @@ import (
 //go:generate mockgen -source=indexer.go -destination=indexer_mock.go -package=blue_green_kafka -mock_names=offsetsIndexer=MockOffsetsIndexer
 
 type offsetsIndexer interface {
-	exists(search GroupId) bool
+	// committedOffsets returns the offsets search has committed for the indexer's topic,
+	// or nil when the group has none.
+	committedOffsets(search GroupId) map[TopicPartition]OffsetAndMetadata
 	bg1VersionsExist() bool
 	bg1VersionsMigrated() bool
 	findPreviousStateOffset(ctx context.Context, current GroupId) []groupIdWithOffset
@@ -20,7 +21,9 @@ type offsetsIndexer interface {
 
 type offsetsIndexerImpl struct {
 	topic string
-	index map[GroupId]map[TopicPartition]OffsetAndMetadata
+	// keyed by GroupId.String(): GroupId is pointer-typed, so using it directly as a map
+	// key would compare by address, not by the group it identifies.
+	index map[string]groupIdWithOffset
 	admin NativeAdminAdapter
 }
 
@@ -38,7 +41,7 @@ type ConsumerGroup struct {
 }
 
 func newOffsetIndexer(ctx context.Context, groupIdPrefix string, topic string, adminAdapter NativeAdminAdapter) (*offsetsIndexerImpl, error) {
-	index := make(map[GroupId]map[TopicPartition]OffsetAndMetadata)
+	index := make(map[string]groupIdWithOffset)
 	groups, err := adminAdapter.ListConsumerGroups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list consumer groups: %w", err)
@@ -59,22 +62,34 @@ func newOffsetIndexer(ctx context.Context, groupIdPrefix string, topic string, a
 		if err != nil {
 			return nil, fmt.Errorf("failed to list consumer group offsets: %w", err)
 		}
-		logger.InfoC(ctx, "Offsets=%+v", offsets)
-		logger.InfoC(ctx, "Adding to index groupId=%s with offset: %+v", groupId.String(), offsets)
-		index[groupId] = offsets
+		// a group id can carry offsets for other topics too; only ours are relevant here.
+		// A negative offset is Kafka's "no committed offset" sentinel, not a commit.
+		topicOffsets := make(map[TopicPartition]OffsetAndMetadata, len(offsets))
+		for tp, o := range offsets {
+			if tp.Topic == topic && o.Offset >= 0 {
+				topicOffsets[tp] = o
+			}
+		}
+		if len(topicOffsets) == 0 {
+			continue // no offsets for this topic; treat as not yet indexed
+		}
+		logger.InfoC(ctx, "Offsets=%+v", topicOffsets)
+		logger.InfoC(ctx, "Adding to index groupId=%s with offset: %+v", groupId.String(), topicOffsets)
+		index[groupId.String()] = groupIdWithOffset{groupId: groupId, offset: topicOffsets}
 	}
 	return &offsetsIndexerImpl{topic: topic, index: index, admin: adminAdapter}, nil
 }
 
-func (indexer *offsetsIndexerImpl) exists(search GroupId) bool {
-	_, ok := indexer.index[search]
-	return ok
+func (indexer *offsetsIndexerImpl) committedOffsets(search GroupId) map[TopicPartition]OffsetAndMetadata {
+	if e, ok := indexer.index[search.String()]; ok {
+		return e.offset
+	}
+	return nil
 }
 
 func (indexer *offsetsIndexerImpl) bg1VersionsExist() bool {
-	for g := range indexer.index {
-		_, ok := g.(*BG1VersionedGroupId)
-		if ok {
+	for _, e := range indexer.index {
+		if _, ok := e.groupId.(*BG1VersionedGroupId); ok {
 			return true
 		}
 	}
@@ -82,9 +97,8 @@ func (indexer *offsetsIndexerImpl) bg1VersionsExist() bool {
 }
 
 func (indexer *offsetsIndexerImpl) bg1VersionsMigrated() bool {
-	for g := range indexer.index {
-		bg1g, ok := g.(*BG1VersionedGroupId)
-		if ok && bg1g.Stage == bg1StageMigrated {
+	for _, e := range indexer.index {
+		if bg1g, ok := e.groupId.(*BG1VersionedGroupId); ok && bg1g.Stage == bg1StageMigrated {
 			return true
 		}
 	}
@@ -92,10 +106,10 @@ func (indexer *offsetsIndexerImpl) bg1VersionsMigrated() bool {
 }
 
 func (indexer *offsetsIndexerImpl) createMigrationDoneFromBg1MarkerGroup(ctx context.Context) error {
-	filtered := map[GroupId]map[TopicPartition]OffsetAndMetadata{}
-	for g, tpOffset := range indexer.index {
-		if vg, ok := g.(*BG1VersionedGroupId); ok && vg.Stage == bg1StageActive {
-			filtered[vg] = tpOffset
+	var filtered []groupIdWithOffset
+	for _, e := range indexer.index {
+		if vg, ok := e.groupId.(*BG1VersionedGroupId); ok && vg.Stage == bg1StageActive {
+			filtered = append(filtered, e)
 		}
 	}
 	latestGroupOffset := getLatestGroupOffset(filtered)
@@ -109,7 +123,7 @@ func (indexer *offsetsIndexerImpl) createMigrationDoneFromBg1MarkerGroup(ctx con
 			Updated:          time.Now(),
 		}
 		logger.InfoC(ctx, "Creating migrated from BG1 marker Group: %s", migratedMarkerGroup.String())
-		return indexer.admin.AlterConsumerGroupOffsets(ctx, migratedMarkerGroup, indexer.index[bg1vg])
+		return indexer.admin.AlterConsumerGroupOffsets(ctx, migratedMarkerGroup, latestGroupOffset.offset)
 	} else {
 		logger.WarnC(ctx, "Did not create 'migrated from BG1 marker Group' because no bg1 active group was found")
 		return nil
@@ -118,50 +132,44 @@ func (indexer *offsetsIndexerImpl) createMigrationDoneFromBg1MarkerGroup(ctx con
 
 func (indexer *offsetsIndexerImpl) findPreviousStateOffset(ctx context.Context, current GroupId) []groupIdWithOffset {
 	logger.InfoC(ctx, "Search the ancestor for: %s", current)
-	filtered := map[GroupId]map[TopicPartition]OffsetAndMetadata{}
+	currentKey := current.String()
+	var filtered []groupIdWithOffset
 
-	for gId, tpOffset := range indexer.index {
+	for key, e := range indexer.index {
 		// filter out current group
-		if gId == current {
+		if key == currentKey {
 			continue
 		}
 		// filter out offsets of the same update time (already created in sibling ns)
-		if vg, ok1 := gId.(*VersionedGroupId); ok1 {
+		if vg, ok1 := e.groupId.(*VersionedGroupId); ok1 {
 			if vCurrent, ok2 := current.(*VersionedGroupId); ok2 &&
 				(vg.Updated.Equal(vCurrent.Updated) || vg.Updated.After(vCurrent.Updated)) {
 				continue
 			}
 		}
-		filtered[gId] = tpOffset
+		filtered = append(filtered, e)
 	}
 	// find latest groupId
 	latestGroupOffset := getLatestGroupOffset(filtered)
-	var latestGroups []GroupId
+	var result []groupIdWithOffset
 	if latestGroupOffset != nil {
 		// if latest groupId is versioned - find all groupIds of the same updateTime
 		if vg1, ok1 := latestGroupOffset.groupId.(*VersionedGroupId); ok1 {
-			for g2 := range indexer.index {
-				if vg2, ok2 := g2.(*VersionedGroupId); ok2 && vg2.Updated.Equal(vg1.Updated) {
-					latestGroups = append(latestGroups, g2)
+			for _, e := range indexer.index {
+				if vg2, ok2 := e.groupId.(*VersionedGroupId); ok2 && vg2.Updated.Equal(vg1.Updated) {
+					result = append(result, e)
 				}
 			}
 		} else if vg1, ok1 := latestGroupOffset.groupId.(*BG1VersionedGroupId); ok1 {
 			// old blue-green groupId, we are interested only in active groupId
-			for g2 := range indexer.index {
-				if vg2, ok2 := g2.(*BG1VersionedGroupId); ok2 && vg2.Updated.Equal(vg1.Updated) && vg2.Stage == bg1StageActive {
-					latestGroups = append(latestGroups, g2)
+			for _, e := range indexer.index {
+				if vg2, ok2 := e.groupId.(*BG1VersionedGroupId); ok2 && vg2.Updated.Equal(vg1.Updated) && vg2.Stage == bg1StageActive {
+					result = append(result, e)
 				}
 			}
 		} else {
-			latestGroups = append(latestGroups, latestGroupOffset.groupId)
+			result = append(result, *latestGroupOffset)
 		}
-	}
-	var result []groupIdWithOffset
-	for _, g := range latestGroups {
-		result = append(result, groupIdWithOffset{
-			groupId: g,
-			offset:  indexer.index[g],
-		})
 	}
 	if len(result) > 0 {
 		var previousStrs []string
@@ -175,32 +183,14 @@ func (indexer *offsetsIndexerImpl) findPreviousStateOffset(ctx context.Context, 
 	return result
 }
 
-func getLatestGroupOffset(index map[GroupId]map[TopicPartition]OffsetAndMetadata) *groupIdWithOffset {
-	result := getSortedIndexKeys(index)
-	length := len(result)
-	if length > 0 {
-		return &result[length-1]
-	} else {
-		return nil
+func getLatestGroupOffset(entries []groupIdWithOffset) *groupIdWithOffset {
+	var latest *groupIdWithOffset
+	for i := range entries {
+		if latest == nil || getSortKeyFromGroup(entries[i].groupId).After(getSortKeyFromGroup(latest.groupId)) {
+			latest = &entries[i]
+		}
 	}
-}
-
-func getSortedIndexKeys(index map[GroupId]map[TopicPartition]OffsetAndMetadata) []groupIdWithOffset {
-	keys := make([]GroupId, 0, len(index))
-	for g := range index {
-		keys = append(keys, g)
-	}
-	sort.Slice(keys, func(gi1, gi2 int) bool {
-		return getSortKeyFromGroup(keys[gi1]).Before(getSortKeyFromGroup(keys[gi2]))
-	})
-	result := make([]groupIdWithOffset, 0, len(index))
-	for _, g := range keys {
-		result = append(result, groupIdWithOffset{
-			groupId: g,
-			offset:  index[g],
-		})
-	}
-	return result
+	return latest
 }
 
 var minTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
