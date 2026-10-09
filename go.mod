@@ -3,7 +3,7 @@ module github.com/netcracker/qubership-core-lib-go-bg-kafka/v3
 go 1.26.5
 
 require (
-	github.com/docker/go-connections v0.8.1
+	github.com/docker/go-connections v0.8.2
 	github.com/golang/mock v1.6.0
 	github.com/netcracker/qubership-core-lib-go-bg-state-monitor/v2 v2.7.1
 	github.com/netcracker/qubership-core-lib-go-rest-utils/v2 v2.9.0
